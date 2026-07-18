@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sakicode"
+version = "0.1.0"
+description = "A minimal AI coding-agent CLI (learning project)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openai",
+    "python-dotenv",
+    "rich",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+sakicode = "sakicode.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
