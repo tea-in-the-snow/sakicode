@@ -7,12 +7,10 @@ design contract.
 ## Usage
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .[dev]
+uv sync --extra dev    # or: python3 -m venv .venv && pip install -e .[dev]
 
 export OPENAI_API_KEY=sk-...   # or DEEPSEEK_API_KEY
-sakicode                       # start the REPL
+uv run sakicode                # start the REPL
 ```
 
 Instead of exporting, you can put the key in a `.env` file in the directory
@@ -33,5 +31,5 @@ confirmation before running.
 Run the tests with:
 
 ```bash
-pytest
+uv run pytest
 ```
