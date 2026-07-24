@@ -4,6 +4,10 @@ A minimal AI coding-agent CLI (learning project), built against any
 OpenAI-compatible endpoint (DeepSeek by default). See PLAN.md for the v1
 design contract.
 
+The project is now being evolved from that v1 baseline into an extensible
+coding-agent runtime. See [ROADMAP.md](ROADMAP.md) for the resume-aligned
+implementation milestones, learning topics, and acceptance criteria.
+
 ## Usage
 
 ```bash
@@ -24,9 +28,11 @@ echo 'OPENAI_API_KEY=sk-...' > .env
 Options: `--model` (default `deepseek-chat`), `--base-url` (default
 `https://api.deepseek.com`, also configurable via `OPENAI_BASE_URL`).
 
-Inside the REPL, type your request at the `saki> ` prompt; `exit`, `quit`,
-Ctrl-C or Ctrl-D leaves. `write_file`, `edit_file` and `run_bash` ask for
-confirmation before running.
+Inside the REPL, type your request at the `saki> ` prompt. Use `/runtime` to
+inspect state transitions and `/trace` to inspect structured tool calls;
+`exit`, `quit`, Ctrl-C or Ctrl-D leaves. Sensitive tool arguments are redacted
+from traces. `write_file`, `edit_file` and `run_bash` ask for confirmation
+before running.
 
 Run the tests with:
 
