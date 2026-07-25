@@ -1,8 +1,7 @@
 # sakicode
 
 A minimal AI coding-agent CLI (learning project), built against any
-OpenAI-compatible endpoint (DeepSeek by default). See PLAN.md for the v1
-design contract.
+OpenAI-compatible endpoint (DeepSeek by default). 
 
 The project is now being evolved from that v1 baseline into an extensible
 coding-agent runtime. See [ROADMAP.md](ROADMAP.md) for the resume-aligned
@@ -25,7 +24,7 @@ and `.env` is git-ignored so the key stays out of commits):
 echo 'OPENAI_API_KEY=sk-...' > .env
 ```
 
-Options: `--model` (default `deepseek-chat`), `--base-url` (default
+Options: `--model` (default `deepseek-v4-flash`), `--base-url` (default
 `https://api.deepseek.com`, also configurable via `OPENAI_BASE_URL`).
 
 Inside the REPL, type your request at the `saki> ` prompt. Use `/runtime` to

@@ -1,10 +1,14 @@
 """The interactive REPL: read user input, hand it to the agent, repeat."""
 
 import json
+from pathlib import Path
 
+from prompt_toolkit import ANSI, PromptSession
+from prompt_toolkit.history import FileHistory
 from rich.console import Console
 
-PROMPT = "[bold cyan]saki> [/bold cyan]"
+PROMPT_TEXT = ANSI("\x1b[1;36msaki> \x1b[0m")
+HISTORY_PATH = Path.home() / ".cache" / "sakicode" / "history"
 
 
 def format_runtime(runtime) -> str:
@@ -35,22 +39,48 @@ def format_traces(tool_registry) -> str:
     return "\n".join(lines)
 
 
-def run_repl(agent, console: Console | None = None) -> None:
+def format_toolbar(agent) -> str:
+    """One-line status bar: runtime state and token usage."""
+    state = agent.runtime.state.value
+    total = agent.total_prompt_tokens + agent.total_completion_tokens
+    return (
+        f" state: {state} | context: ~{agent.context_tokens:,} tok "
+        f"| total: {total:,} tok "
+    )
+
+
+def build_session(agent) -> PromptSession:
+    """Create the prompt session: persistent history plus a status bar."""
+    HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return PromptSession(
+        history=FileHistory(str(HISTORY_PATH)),
+        bottom_toolbar=lambda: format_toolbar(agent),
+    )
+
+
+def run_repl(agent, console: Console | None = None, session=None) -> None:
     console = console or agent.console
+    session = session or build_session(agent)
     console.print(
         "[dim]sakicode — use /runtime for states and /trace for tool calls; "
-        "exit or quit to leave (Ctrl-C / Ctrl-D also work).[/dim]"
+        "exit, quit or /exit to leave (Ctrl-C / Ctrl-D also work).[/dim]"
     )
     while True:
         try:
-            user_input = console.input(PROMPT)
+            user_input = session.prompt(PROMPT_TEXT)
+        except UnicodeDecodeError:
+            console.print(
+                "[yellow]Could not decode terminal input as UTF-8; "
+                "please re-enter the command.[/yellow]"
+            )
+            continue
         except (EOFError, KeyboardInterrupt):
             console.print("\nBye!")
             return
         text = user_input.strip()
         if not text:
             continue
-        if text.lower() in ("exit", "quit"):
+        if text.lower() in ("exit", "quit", "/exit"):
             console.print("Bye!")
             return
         if text.lower() == "/runtime":

@@ -30,6 +30,16 @@ class Agent:
         self._context_warning_shown = False
         self.runtime = AgentStateMachine()
         self.tool_registry = tool_registry or tools.create_registry()
+        self.last_prompt_tokens: int | None = None
+        self.total_prompt_tokens = 0
+        self.total_completion_tokens = 0
+
+    @property
+    def context_tokens(self) -> int:
+        """Best-known context size: API-reported prompt tokens, else a rough estimate."""
+        if self.last_prompt_tokens is not None:
+            return self.last_prompt_tokens
+        return sum(len(str(m.get("content") or "")) for m in self.messages) // 4
 
     def run_turn(self, user_text: str) -> None:
         """Handle one user message: stream replies and run tools until done."""
@@ -85,10 +95,16 @@ class Agent:
             messages=self.messages,
             tools=self.tool_registry.schemas(),
             stream=True,
+            stream_options={"include_usage": True},
         )
         content_parts: list[str] = []
         pending: dict[int, dict] = {}
         for chunk in stream:
+            if chunk.usage:
+                # The final usage chunk reports the whole request's totals.
+                self.last_prompt_tokens = chunk.usage.prompt_tokens
+                self.total_prompt_tokens += chunk.usage.prompt_tokens
+                self.total_completion_tokens += chunk.usage.completion_tokens
             if not chunk.choices:
                 continue
             delta = chunk.choices[0].delta

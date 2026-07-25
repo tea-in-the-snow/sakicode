@@ -1,6 +1,8 @@
 """Tests for REPL-only commands."""
 
-from sakicode.repl import format_runtime, format_traces
+from types import SimpleNamespace
+
+from sakicode.repl import format_runtime, format_toolbar, format_traces, run_repl
 from sakicode.runtime import AgentState, AgentStateMachine
 from sakicode.tooling import FunctionTool, ToolRegistry, ToolResult
 
@@ -42,3 +44,87 @@ def test_format_traces_shows_outcome_and_redacted_arguments():
     assert "login [ok]" in output
     assert '"token": "[REDACTED]"' in output
     assert "do-not-print" not in output
+
+
+def test_format_toolbar_shows_state_and_token_usage():
+    agent = SimpleNamespace(
+        runtime=AgentStateMachine(),
+        context_tokens=1234,
+        total_prompt_tokens=2000,
+        total_completion_tokens=300,
+    )
+
+    toolbar = format_toolbar(agent)
+
+    assert "state: idle" in toolbar
+    assert "context: ~1,234 tok" in toolbar
+    assert "total: 2,300 tok" in toolbar
+
+
+def test_repl_recovers_from_undecodable_terminal_input():
+    class FakeSession:
+        def __init__(self):
+            self.inputs = iter(
+                [
+                    UnicodeDecodeError("utf-8", b"\xe3", 0, 1, "invalid byte"),
+                    "/trace",
+                    "exit",
+                ]
+            )
+
+        def prompt(self, _prompt):
+            value = next(self.inputs)
+            if isinstance(value, BaseException):
+                raise value
+            return value
+
+    class FakeConsole:
+        def __init__(self):
+            self.output = []
+
+        def print(self, message):
+            self.output.append(message)
+
+    console = FakeConsole()
+    agent = SimpleNamespace(
+        console=console,
+        runtime=AgentStateMachine(),
+        tool_registry=SimpleNamespace(traces=[]),
+    )
+
+    run_repl(agent, session=FakeSession())
+
+    assert any("please re-enter the command" in line for line in console.output)
+    assert "Tool traces: (none)" in console.output
+    assert console.output[-1] == "Bye!"
+
+
+def test_repl_exits_on_slash_exit_without_running_a_turn():
+    class FakeSession:
+        def __init__(self):
+            self.inputs = iter(["/exit"])
+
+        def prompt(self, _prompt):
+            return next(self.inputs)
+
+    class FakeConsole:
+        def __init__(self):
+            self.output = []
+
+        def print(self, message):
+            self.output.append(message)
+
+    def run_turn(_text):
+        raise AssertionError("run_turn must not be called for /exit")
+
+    console = FakeConsole()
+    agent = SimpleNamespace(
+        console=console,
+        runtime=AgentStateMachine(),
+        tool_registry=SimpleNamespace(traces=[]),
+        run_turn=run_turn,
+    )
+
+    run_repl(agent, session=FakeSession())
+
+    assert console.output[-1] == "Bye!"
