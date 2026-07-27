@@ -246,6 +246,9 @@ def _object_schema(
     }
 
 
+# Note: requires_confirmation remains part of the M2 Tool protocol, but since
+# M3 the Agent no longer reads it — allow/ask/deny decisions are owned by
+# permissions.PermissionEngine. The flag is kept so the protocol stays stable.
 BUILTIN_TOOLS = [
     FunctionTool(
         name="read_file",

@@ -2,16 +2,18 @@
 
 import json
 import sys
+from pathlib import Path
 
 from openai import APIError
 from rich.console import Console
 
 from . import tools
+from .context import ContextBudget, ContextBudgetError, ContextManager
+from .permissions import Decision, PermissionEngine, PolicyDecision
 from .runtime import AgentState, AgentStateMachine
 from .tooling import ToolErrorCode, ToolRegistry, ToolResult
 
 MAX_TOOL_CALLS_PER_TURN = 25
-CONTEXT_WINDOW_TOKENS = 128_000
 
 
 class Agent:
@@ -22,29 +24,38 @@ class Agent:
         system_prompt: str,
         console: Console | None = None,
         tool_registry: ToolRegistry | None = None,
+        permission_engine: PermissionEngine | None = None,
+        context_manager: ContextManager | None = None,
+        context_budget: ContextBudget | None = None,
     ):
         self.client = client
         self.model = model
         self.messages: list[dict] = [{"role": "system", "content": system_prompt}]
         self.console = console or Console()
-        self._context_warning_shown = False
         self.runtime = AgentStateMachine()
         self.tool_registry = tool_registry or tools.create_registry()
+        self.permission_engine = permission_engine or PermissionEngine(Path.cwd())
+        self.context_manager = context_manager or ContextManager(
+            model, budget=context_budget
+        )
+        self.last_context_stats = None
+        self.task_summary: str | None = None
         self.last_prompt_tokens: int | None = None
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
 
     @property
     def context_tokens(self) -> int:
-        """Best-known context size: API-reported prompt tokens, else a rough estimate."""
+        """Best-known size of the most recent model request."""
         if self.last_prompt_tokens is not None:
             return self.last_prompt_tokens
-        return sum(len(str(m.get("content") or "")) for m in self.messages) // 4
+        if self.last_context_stats is not None:
+            return self.last_context_stats.estimated_input_tokens
+        return self.context_manager.estimate_messages(self.messages)
 
     def run_turn(self, user_text: str) -> None:
         """Handle one user message: stream replies and run tools until done."""
         self.messages.append({"role": "user", "content": user_text})
-        self._check_context_size()
         tool_calls_made = 0
         self.runtime.begin_turn()
         try:
@@ -80,6 +91,9 @@ class Agent:
         except APIError as e:
             self.runtime.transition(AgentState.FAILED, f"model API error: {type(e).__name__}")
             self.console.print(f"[red]API error: {e}[/red]")
+        except ContextBudgetError as e:
+            self.runtime.transition(AgentState.FAILED, "mandatory context exceeds token budget")
+            self.console.print(f"[red]Context budget error: {e}[/red]")
         except KeyboardInterrupt:
             self.runtime.transition(AgentState.INTERRUPTED, "user interrupted turn")
             raise
@@ -90,10 +104,15 @@ class Agent:
         Tool-call deltas arrive fragmented across chunks and are merged by
         index: ids/names/argument strings are concatenated.
         """
+        schemas = self.tool_registry.schemas()
+        prepared = self.context_manager.prepare(self.messages, schemas)
+        self.last_context_stats = prepared.stats
+        self.task_summary = prepared.task_summary
         stream = self.client.chat.completions.create(
             model=self.model,
-            messages=self.messages,
-            tools=self.tool_registry.schemas(),
+            messages=prepared.messages,
+            tools=schemas,
+            max_tokens=self.context_manager.budget.max_output_tokens,
             stream=True,
             stream_options={"include_usage": True},
         )
@@ -152,14 +171,30 @@ class Agent:
                 name, args, validation_error, tool_call.get("id")
             )
             return validation_error.to_model_text()
-        if self.tool_registry.requires_confirmation(name):
+        # Permission decisions are owned by the PermissionEngine (M3); the
+        # per-tool requires_confirmation flag is no longer consulted here.
+        policy = self.permission_engine.evaluate(name, args)
+        if policy.decision is Decision.DENY:
+            self.permission_engine.record(name, policy, "policy_deny")
+            result = ToolResult.error(
+                ToolErrorCode.PERMISSION_DENIED,
+                f"permission denied by policy: {policy.reason}",
+            )
+            self.tool_registry.record_result(
+                name, args, result, tool_call.get("id")
+            )
+            return result.to_model_text()
+        if policy.decision is Decision.ASK:
             self.runtime.transition(AgentState.WAITING_APPROVAL, f"approval required for {name}")
-            approved = self._confirm(name, args)
+            outcome = self._request_approval(policy)
             self.runtime.transition(
                 AgentState.EXECUTING_TOOLS,
-                f"approval {'granted' if approved else 'denied'} for {name}",
+                f"approval outcome {outcome} for {name}",
             )
-            if not approved:
+            self.permission_engine.record(name, policy, outcome)
+            if outcome == "allow_session":
+                self.permission_engine.approve_session(policy)
+            if outcome == "deny":
                 result = ToolResult.error(
                     ToolErrorCode.PERMISSION_DENIED,
                     "permission denied by user",
@@ -168,6 +203,13 @@ class Agent:
                     name, args, result, tool_call.get("id")
                 )
                 return result.to_model_text()
+        else:
+            # Pure policy allows carry no grant key; an ALLOW with a grant key
+            # means a session grant short-circuited the prompt.
+            outcome = "session_grant_hit" if policy.grant_key else "policy_allow"
+            self.permission_engine.record(name, policy, outcome)
+            if policy.grant_key:
+                self.console.print(f"[dim]{policy.reason}[/dim]")
         self.console.print(f"[dim]→ {name}({_summarize(name, args)})[/dim]")
         result = self.tool_registry.execute(name, args, tool_call.get("id"))
         outcome = "error" if result.is_error else "ok"
@@ -195,31 +237,32 @@ class Agent:
         )
         return result.to_model_text()
 
-    def _confirm(self, name: str, args: dict) -> bool:
-        """Ask the user before running a mutating tool. Default is deny."""
-        self.console.print(f"[yellow]Tool {name!r} wants to run:[/yellow] {_summarize(name, args)}")
+    def _request_approval(self, policy: PolicyDecision) -> str:
+        """Ask the user about one ASK decision; the default answer is deny.
+
+        Returns the audit outcome: "allow_once", "allow_session", or "deny".
+        The prompt shows the engine's normalized target, never the raw model
+        arguments, so the user approves exactly what was classified.
+        """
+        self.console.print(f"[yellow]Approval needed:[/yellow] {policy.reason}")
+        self.console.print(f"[yellow]Target: {policy.target}[/yellow]")
         if not sys.stdin.isatty():
             self.console.print("[yellow]stdin is not a TTY; denying automatically.[/yellow]")
-            return False
+            return "deny"
+        if policy.session_grantable:
+            prompt = "Allow? [y] once / [s] this kind for the session / [N] deny "
+        else:
+            prompt = "Allow? [y] once / [N] deny "
         try:
-            answer = input("Allow? [y/N] ")
+            answer = input(prompt)
         except EOFError:
-            return False
-        return answer.strip().lower() in ("y", "yes")
-
-    def _check_context_size(self) -> None:
-        """Warn once when the rough token estimate exceeds 80% of the window."""
-        if self._context_warning_shown:
-            return
-        total_chars = sum(len(str(m.get("content") or "")) for m in self.messages)
-        estimated_tokens = total_chars // 4
-        if estimated_tokens > 0.8 * CONTEXT_WINDOW_TOKENS:
-            self.console.print(
-                "[yellow]Warning: context is getting large "
-                f"(~{estimated_tokens:,} tokens).[/yellow]"
-            )
-            self._context_warning_shown = True
-
+            return "deny"
+        answer = answer.strip().lower()
+        if answer in ("y", "yes"):
+            return "allow_once"
+        if answer in ("s", "session") and policy.session_grantable:
+            return "allow_session"
+        return "deny"
 
 def _summarize(name: str, args: dict) -> str:
     """One-line summary of a tool call: the path, or the command."""

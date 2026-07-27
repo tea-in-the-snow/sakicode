@@ -2,7 +2,13 @@
 
 from types import SimpleNamespace
 
-from sakicode.repl import format_runtime, format_toolbar, format_traces, run_repl
+from sakicode.repl import (
+    format_context,
+    format_runtime,
+    format_toolbar,
+    format_traces,
+    run_repl,
+)
 from sakicode.runtime import AgentState, AgentStateMachine
 from sakicode.tooling import FunctionTool, ToolRegistry, ToolResult
 
@@ -59,6 +65,27 @@ def test_format_toolbar_shows_state_and_token_usage():
     assert "state: idle" in toolbar
     assert "context: ~1,234 tok" in toolbar
     assert "total: 2,300 tok" in toolbar
+
+
+def test_format_context_shows_four_layers():
+    stats = SimpleNamespace(
+        estimated_input_tokens=900,
+        max_input_tokens=1000,
+        tokenizer="fake:model",
+        instruction_tokens=100,
+        task_state_tokens=200,
+        recent_dialogue_tokens=400,
+        tool_result_tokens=200,
+        dropped_groups=3,
+        trimmed_tool_results=2,
+    )
+
+    output = format_context(SimpleNamespace(last_context_stats=stats))
+
+    assert "900/1,000" in output
+    assert "instructions=100" in output
+    assert "tool_results=200" in output
+    assert "compacted_groups=3" in output
 
 
 def test_repl_recovers_from_undecodable_terminal_input():

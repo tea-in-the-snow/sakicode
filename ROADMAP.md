@@ -62,6 +62,9 @@
 
 ### M3：细粒度权限与审批
 
+状态：已完成第一版，配套讲义见
+[`docs/learning/03-permissions-and-approval.md`](docs/learning/03-permissions-and-approval.md)。
+
 引入 `allow / ask / deny` 决策，风险维度包含工具种类、读写行为、工作区路径、
 命令特征和已授权作用域。审批只授权规范化后的精确目标或规则，不直接信任模型文本。
 
@@ -75,6 +78,9 @@
 应掌握：最小权限、默认拒绝、路径规范化、shell 攻击面、TOCTOU。
 
 ### M4：分层上下文与 Token Budget
+
+状态：已完成第一版，配套讲义见
+[`docs/learning/04-layered-context-and-token-budget.md`](docs/learning/04-layered-context-and-token-budget.md)。
 
 将上下文分成 system/instruction、任务状态、近期对话、工具结果四层。预算分配后，
 先按策略裁剪大型工具输出，再把较老历史压缩成带事实/决策/待办的结构化摘要。

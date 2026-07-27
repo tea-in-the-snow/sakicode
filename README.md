@@ -28,10 +28,22 @@ Options: `--model` (default `deepseek-v4-flash`), `--base-url` (default
 `https://api.deepseek.com`, also configurable via `OPENAI_BASE_URL`).
 
 Inside the REPL, type your request at the `saki> ` prompt. Use `/runtime` to
-inspect state transitions and `/trace` to inspect structured tool calls;
+inspect state transitions, `/trace` to inspect structured tool calls,
+`/approvals` to inspect permission decisions and active session grants, and
+`/context` to inspect the four token-budget layers and compaction statistics;
 `exit`, `quit`, Ctrl-C or Ctrl-D leaves. Sensitive tool arguments are redacted
-from traces. `write_file`, `edit_file` and `run_bash` ask for confirmation
-before running.
+from traces. A permission engine classifies every tool call as allow/ask/deny:
+writes outside the workspace and high-risk commands are denied outright, other
+writes and shell commands ask (with "once" and "this kind for the session"
+grants), and read-only calls inside the workspace run directly.
+
+Before each model request, context is assembled from immutable instructions,
+a structured task-state summary, recent dialogue, and bounded tool results.
+Known OpenAI models use their `tiktoken` encoding; unknown/provider-specific
+models use a deliberately conservative UTF-8 byte estimate. Old tool-call
+bundles are compacted atomically, so assistant calls never lose their matching
+tool results. See
+[the M4 learning notes](docs/learning/04-layered-context-and-token-budget.md).
 
 Run the tests with:
 

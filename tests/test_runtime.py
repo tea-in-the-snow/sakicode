@@ -6,6 +6,7 @@ import pytest
 from rich.console import Console
 
 from sakicode.agent import Agent
+from sakicode.permissions import PermissionEngine
 from sakicode.runtime import (
     AgentState,
     AgentStateMachine,
@@ -85,8 +86,8 @@ def test_agent_loop_moves_through_model_tool_and_completion_states():
 class DeniedApprovalAgent(ScriptedAgent):
     _execute_tool = Agent._execute_tool
 
-    def _confirm(self, name, args):
-        return False
+    def _request_approval(self, policy):
+        return "deny"
 
 
 def test_denied_approval_is_recorded_and_returned_to_model(tmp_path):
@@ -105,6 +106,8 @@ def test_denied_approval_is_recorded_and_returned_to_model(tmp_path):
             ("The write was denied.", []),
         ]
     )
+    # Root the workspace at tmp_path so the write is an ASK, not a policy DENY.
+    agent.permission_engine = PermissionEngine(tmp_path)
 
     agent.run_turn("write a file")
 
@@ -123,7 +126,7 @@ class ActualToolAgent(ScriptedAgent):
 
 
 class ConfirmationMustNotRunAgent(ActualToolAgent):
-    def _confirm(self, name, args):
+    def _request_approval(self, policy):
         raise AssertionError("invalid arguments must be rejected before approval")
 
 

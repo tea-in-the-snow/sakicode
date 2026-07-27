@@ -1,6 +1,7 @@
 """The interactive REPL: read user input, hand it to the agent, repeat."""
 
 import json
+import time
 from pathlib import Path
 
 from prompt_toolkit import ANSI, PromptSession
@@ -39,6 +40,39 @@ def format_traces(tool_registry) -> str:
     return "\n".join(lines)
 
 
+def format_approvals(permission_engine) -> str:
+    """Format the permission audit log and the active session grants."""
+    grants = permission_engine.session_grants
+    lines = ["Session grants: " + (", ".join(grants) if grants else "(none)")]
+    if not permission_engine.audit_log:
+        lines.append("Approval audit: (no decisions yet)")
+        return "\n".join(lines)
+    lines.append("Approval audit:")
+    for index, record in enumerate(permission_engine.audit_log, start=1):
+        moment = time.strftime("%H:%M:%S", time.localtime(record.timestamp))
+        lines.append(
+            f"{index}. {moment} {record.tool} [{record.outcome}] "
+            f"{record.target} — {record.reason}"
+        )
+    return "\n".join(lines)
+
+
+def format_context(agent) -> str:
+    """Show the latest four-layer context allocation."""
+    stats = agent.last_context_stats
+    if stats is None:
+        return "Context budget: (no model request yet)"
+    return (
+        f"Context: {stats.estimated_input_tokens:,}/{stats.max_input_tokens:,} tokens "
+        f"({stats.tokenizer})\n"
+        f"instructions={stats.instruction_tokens:,}, task_state={stats.task_state_tokens:,}, "
+        f"recent_dialogue={stats.recent_dialogue_tokens:,}, "
+        f"tool_results={stats.tool_result_tokens:,}\n"
+        f"compacted_groups={stats.dropped_groups}, "
+        f"trimmed_tool_results={stats.trimmed_tool_results}"
+    )
+
+
 def format_toolbar(agent) -> str:
     """One-line status bar: runtime state and token usage."""
     state = agent.runtime.state.value
@@ -62,7 +96,8 @@ def run_repl(agent, console: Console | None = None, session=None) -> None:
     console = console or agent.console
     session = session or build_session(agent)
     console.print(
-        "[dim]sakicode — use /runtime for states and /trace for tool calls; "
+        "[dim]sakicode — /runtime for states, /trace for tool calls, "
+        "/approvals for permission decisions, /context for token layers; "
         "exit, quit or /exit to leave (Ctrl-C / Ctrl-D also work).[/dim]"
     )
     while True:
@@ -88,6 +123,12 @@ def run_repl(agent, console: Console | None = None, session=None) -> None:
             continue
         if text.lower() == "/trace":
             console.print(format_traces(agent.tool_registry))
+            continue
+        if text.lower() == "/approvals":
+            console.print(format_approvals(agent.permission_engine))
+            continue
+        if text.lower() == "/context":
+            console.print(format_context(agent))
             continue
         try:
             agent.run_turn(text)
