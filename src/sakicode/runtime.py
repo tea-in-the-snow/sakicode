@@ -95,3 +95,20 @@ class AgentStateMachine:
             "state": self.state.value,
             "history": [event.to_dict() for event in self.history],
         }
+
+    @classmethod
+    def from_snapshot(cls, snapshot: dict) -> "AgentStateMachine":
+        """Rehydrate and semantically validate a serialized transition history."""
+        runtime = cls()
+        for event in snapshot["history"]:
+            previous = AgentState(event["previous"])
+            if previous is not runtime.state:
+                raise InvalidStateTransition(
+                    f"history expected {runtime.state.value!r}, got {previous.value!r}"
+                )
+            runtime.transition(AgentState(event["current"]), event["reason"])
+        if runtime.state is not AgentState(snapshot["state"]):
+            raise InvalidStateTransition(
+                "runtime state does not match the final history transition"
+            )
+        return runtime

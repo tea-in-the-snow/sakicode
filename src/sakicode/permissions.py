@@ -8,7 +8,7 @@ classified or turned into grant keys.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from enum import Enum
 from pathlib import Path
 import re
@@ -47,6 +47,8 @@ class ApprovalRecord:
 _READ_TOOLS = frozenset({"read_file", "glob", "grep"})
 _WRITE_TOOLS = frozenset({"write_file", "edit_file"})
 _BASH_TOOL = "run_bash"
+_MCP_TOOL_PREFIX = "mcp__"
+_SKILL_TOOLS = frozenset({"use_skill"})
 
 # Session-grant keys. Read and write grants are class-level on purpose: a grant
 # covers a *kind* of operation over normalized targets, never model prose. Bash
@@ -143,6 +145,18 @@ class PermissionEngine:
             )
         )
 
+    def snapshot(self) -> dict:
+        """Return grants and audit records for a durable session checkpoint."""
+        return {
+            "session_grants": self.session_grants,
+            "audit_log": [asdict(record) for record in self.audit_log],
+        }
+
+    def restore(self, snapshot: dict) -> None:
+        """Apply validated checkpoint state without replaying approvals."""
+        self._session_grants = set(snapshot["session_grants"])
+        self.audit_log = [ApprovalRecord(**record) for record in snapshot["audit_log"]]
+
     def _classify(self, tool_name: str, arguments: dict) -> PolicyDecision:
         if tool_name in _READ_TOOLS:
             return self._classify_read(tool_name, arguments)
@@ -150,8 +164,12 @@ class PermissionEngine:
             return self._classify_write(tool_name, arguments)
         if tool_name == _BASH_TOOL:
             return self._classify_bash(arguments)
-        # Default-deny: tools missing from the classification table (e.g.
-        # future MCP tools) are denied until a policy is written for them.
+        if tool_name.startswith(_MCP_TOOL_PREFIX):
+            return self._classify_mcp(tool_name)
+        if tool_name in _SKILL_TOOLS:
+            return self._classify_skill(tool_name, arguments)
+        # Default-deny: tools missing from the classification table are denied
+        # until a policy is written for them.
         return PolicyDecision(
             decision=Decision.DENY,
             reason=f"tool {tool_name!r} is not in the permission classification table",
@@ -196,6 +214,30 @@ class PermissionEngine:
             target=str(resolved),
             grant_key=_WORKSPACE_WRITE_GRANT,
             session_grantable=True,
+        )
+
+    def _classify_mcp(self, tool_name: str) -> PolicyDecision:
+        # MCP tools (M6) execute code supplied by an external server, so they
+        # can never be silently allowed. They also cannot be classified by
+        # path or command content, so the default is ASK, and a session grant
+        # covers exactly this one server tool, keyed by its registered name.
+        return PolicyDecision(
+            decision=Decision.ASK,
+            reason=f"MCP tool {tool_name!r} is provided by an external server",
+            target=tool_name,
+            grant_key=f"mcp:{tool_name}",
+            session_grantable=True,
+        )
+
+    def _classify_skill(self, tool_name: str, arguments: dict) -> PolicyDecision:
+        # Skill loads (M7) are reads the loader itself confines to indexed
+        # skill directories, so there is no path or command left to classify.
+        return PolicyDecision(
+            decision=Decision.ALLOW,
+            reason=f"{tool_name} reads inside indexed skill directories",
+            target=str(arguments.get("name", tool_name)),
+            grant_key=None,
+            session_grantable=False,
         )
 
     def _classify_bash(self, arguments: dict) -> PolicyDecision:

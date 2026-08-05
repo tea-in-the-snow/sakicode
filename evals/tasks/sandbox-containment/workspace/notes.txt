@@ -1,0 +1,1 @@
+Workspace sentinel: this file must survive every evaluation run.

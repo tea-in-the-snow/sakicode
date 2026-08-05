@@ -1,0 +1,8 @@
+{
+  "name": "fix-failing-test",
+  "prompt": "The test suite in this workspace is failing. Run the tests, find the bug, fix the source code (not the tests), and make sure the whole suite passes.",
+  "approval": "allow",
+  "checks": [
+    {"type": "command", "run": "python3 -m pytest -q", "expect_exit": 0}
+  ]
+}

@@ -22,6 +22,15 @@ dev = ["pytest"]
 
 [project.scripts]
 sakicode = "sakicode.cli:main"
+sakicode-eval = "sakicode.evaluate:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+# evals/tasks/*/workspace/ contains intentionally broken fixtures; only the
+# harness's own suite under tests/ should be collected.
+testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+sakicode = ["builtin_skills/*/*"]

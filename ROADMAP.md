@@ -97,6 +97,9 @@ prompt injection 在长期记忆中的传播风险。
 
 ### M5：检查点与长程任务恢复
 
+状态：已完成第一版，配套讲义见
+[`docs/learning/05-checkpoint-and-recovery.md`](docs/learning/05-checkpoint-and-recovery.md)。
+
 保存版本化 checkpoint：消息、任务摘要、runtime 终态、预算使用、权限授予和工具
 trace。采用临时文件 + 原子替换，恢复时校验版本与工作区身份；不保存 API Key。
 
@@ -109,6 +112,9 @@ trace。采用临时文件 + 原子替换，恢复时校验版本与工作区身
 应掌握：序列化 schema、原子写、幂等性、崩溃一致性、secret hygiene。
 
 ### M6：MCP 客户端
+
+状态：已完成第一版，配套讲义见
+[`docs/learning/06-mcp-client.md`](docs/learning/06-mcp-client.md)。
 
 先实现 stdio transport，再实现 initialize/list_tools/call_tool。远端工具转换到统一
 registry，调用前做 Schema 校验，并在超时后终止隔离的子进程。
@@ -123,6 +129,9 @@ registry，调用前做 Schema 校验，并在超时后终止隔离的子进程�
 
 ### M7：声明式 Skill 系统
 
+状态：已完成第一版，配套讲义见
+[`docs/learning/07-skill-system.md`](docs/learning/07-skill-system.md)。
+
 定义 `SKILL.md` 元数据与目录约定。启动时只建立轻量索引，匹配任务后再加载正文和
 所需资源；作用域分为内置、用户和项目，采用明确的覆盖规则。
 
@@ -136,11 +145,27 @@ registry，调用前做 Schema 校验，并在超时后终止隔离的子进程�
 
 ### M8：端到端评测与简历证据
 
-建立固定任务集，例如新增 CLI 参数、修复测试、跨文件重构和拒绝危险命令。记录
-成功率、工具调用数、token 使用、耗时、审批次数和恢复成功率。
+状态：已完成第一版，配套讲义见
+[`docs/learning/08-evaluation-harness.md`](docs/learning/08-evaluation-harness.md)。
+
+建立固定任务集（`evals/tasks/`）：新增 CLI 参数、修复测试、跨文件重构和拒绝
+危险命令。`sakicode-eval` 逐任务在 fixture 副本中运行 Agent，按声明式 checks
+评分，记录成功率、工具调用数、token 使用、耗时、审批次数和恢复成功率，结果
+写入 `evals/results/<run-id>.json`；`--compare A B` 对比两次运行。
 
 最终简历中的每个动词都应链接到对应模块/测试，每个性能或准确率数字都应能由评测
 脚本复现。没有评测支撑的数字不写入简历。
+
+### M9：沙箱（bubblewrap）
+
+状态：已完成第一版，配套讲义见
+[`docs/learning/09-sandbox.md`](docs/learning/09-sandbox.md)。
+
+权限引擎是调用前防线，沙箱是执行时防线：每条被批准的 `run_bash` 命令在
+bubblewrap 中运行——全文件系统只读、仅工作区可写、私有 /tmp、默认断网、
+环境变量脱敏（API key 不进沙箱）、`~/.ssh` 等凭据目录挂空遮蔽。
+`--sandbox auto|bwrap|off` 控制，bwrap 缺失时明确降级；评测任务
+`sandbox-containment` 提供可复现的 containment 证据。
 
 ## 推荐学习节奏
 

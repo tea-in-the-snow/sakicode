@@ -1,5 +1,6 @@
 """The agent: conversation state, streaming responses, and the tool-use loop."""
 
+from collections.abc import Callable
 import json
 import sys
 from pathlib import Path
@@ -8,7 +9,8 @@ from openai import APIError
 from rich.console import Console
 
 from . import tools
-from .context import ContextBudget, ContextBudgetError, ContextManager
+from .checkpoint import CheckpointError, CheckpointStore, RestoredCheckpoint
+from .context import ContextBudget, ContextBudgetError, ContextManager, ContextStats
 from .permissions import Decision, PermissionEngine, PolicyDecision
 from .runtime import AgentState, AgentStateMachine
 from .tooling import ToolErrorCode, ToolRegistry, ToolResult
@@ -27,6 +29,9 @@ class Agent:
         permission_engine: PermissionEngine | None = None,
         context_manager: ContextManager | None = None,
         context_budget: ContextBudget | None = None,
+        checkpoint_store: CheckpointStore | None = None,
+        session_id: str | None = None,
+        approval_handler: Callable[[PolicyDecision], str] | None = None,
     ):
         self.client = client
         self.model = model
@@ -43,6 +48,11 @@ class Agent:
         self.last_prompt_tokens: int | None = None
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
+        self.checkpoint_store = checkpoint_store
+        self.approval_handler = approval_handler
+        self.session_id = session_id or (
+            checkpoint_store.new_session_id() if checkpoint_store is not None else None
+        )
 
     @property
     def context_tokens(self) -> int:
@@ -97,6 +107,44 @@ class Agent:
         except KeyboardInterrupt:
             self.runtime.transition(AgentState.INTERRUPTED, "user interrupted turn")
             raise
+        finally:
+            if self.checkpoint_store is not None and self.runtime.state in {
+                AgentState.COMPLETED,
+                AgentState.FAILED,
+                AgentState.LIMIT_REACHED,
+                AgentState.INTERRUPTED,
+            }:
+                try:
+                    self.save_checkpoint()
+                except CheckpointError as error:
+                    self.console.print(f"[red]Checkpoint error: {error}[/red]")
+
+    def save_checkpoint(self) -> Path:
+        """Persist the current terminal state and return the checkpoint path."""
+        if self.checkpoint_store is None or self.session_id is None:
+            raise CheckpointError("checkpoint persistence is not configured")
+        return self.checkpoint_store.save(self, self.session_id)
+
+    def restore_checkpoint(self, restored: RestoredCheckpoint) -> None:
+        """Apply validated state without replaying model or tool side effects."""
+        payload = restored.payload
+        state = payload["agent"]
+        usage = state["budget"]
+        self.session_id = restored.session_id
+        self.model = state["model"]
+        self.messages = state["messages"]
+        self.task_summary = state["task_summary"]
+        self.runtime = AgentStateMachine.from_snapshot(state["runtime"])
+        self.context_manager = ContextManager(
+            self.model, budget=ContextBudget(**usage["limits"])
+        )
+        stats = usage["last_context_stats"]
+        self.last_context_stats = ContextStats(**stats) if stats is not None else None
+        self.last_prompt_tokens = usage["last_prompt_tokens"]
+        self.total_prompt_tokens = usage["total_prompt_tokens"]
+        self.total_completion_tokens = usage["total_completion_tokens"]
+        self.permission_engine.restore(payload["permissions"])
+        self.tool_registry.restore_traces(payload["tool_traces"])
 
     def _stream_response(self) -> tuple[str, list[dict]]:
         """Stream one completion, printing text as it arrives.
@@ -244,6 +292,10 @@ class Agent:
         The prompt shows the engine's normalized target, never the raw model
         arguments, so the user approves exactly what was classified.
         """
+        # Non-interactive callers (the eval harness) inject a handler so runs
+        # never block on stdin; the handler sees the same normalized policy.
+        if self.approval_handler is not None:
+            return self.approval_handler(policy)
         self.console.print(f"[yellow]Approval needed:[/yellow] {policy.reason}")
         self.console.print(f"[yellow]Target: {policy.target}[/yellow]")
         if not sys.stdin.isatty():
@@ -265,7 +317,9 @@ class Agent:
         return "deny"
 
 def _summarize(name: str, args: dict) -> str:
-    """One-line summary of a tool call: the path, or the command."""
-    text = args.get("command") if name == "run_bash" else args.get("path", "")
+    """One-line summary of a tool call: the path, the command, or the args."""
+    text = args.get("command") if name == "run_bash" else args.get("path")
+    if text is None:
+        text = json.dumps(args, ensure_ascii=False)
     text = str(text).replace("\n", " ")
     return text if len(text) <= 80 else text[:77] + "..."

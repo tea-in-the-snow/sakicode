@@ -1,0 +1,10 @@
+{
+  "name": "add-cli-flag",
+  "prompt": "Add a --shout flag to app.py: when present, the greeting is printed in uppercase. Keep the existing positional argument and default behavior unchanged, and verify both modes by running the program.",
+  "approval": "allow",
+  "checks": [
+    {"type": "command", "run": "python3 app.py World --shout", "expect_exit": 0},
+    {"type": "command", "run": "python3 app.py World", "expect_exit": 0},
+    {"type": "file_contains", "path": "app.py", "pattern": "--shout"}
+  ]
+}

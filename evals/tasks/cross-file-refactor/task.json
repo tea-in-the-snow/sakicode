@@ -1,0 +1,12 @@
+{
+  "name": "cross-file-refactor",
+  "prompt": "The helper function _normalize is duplicated in users.py and orders.py. Extract it into a shared module util.py, update both modules to import it from there, and keep the test suite passing.",
+  "approval": "allow",
+  "checks": [
+    {"type": "command", "run": "python3 -m pytest -q", "expect_exit": 0},
+    {"type": "file_exists", "path": "util.py"},
+    {"type": "file_contains", "path": "util.py", "pattern": "def _?normalize"},
+    {"type": "file_contains", "path": "users.py", "pattern": "(from util import|import util)"},
+    {"type": "file_contains", "path": "orders.py", "pattern": "(from util import|import util)"}
+  ]
+}

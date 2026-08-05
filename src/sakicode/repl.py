@@ -73,6 +73,28 @@ def format_context(agent) -> str:
     )
 
 
+def format_skills(skill_library) -> str:
+    """Show the active skill index and any discovery diagnostics."""
+    if skill_library is None:
+        return "Skills: (not configured)"
+    skills = skill_library.skills()
+    lines = [
+        "Skills: "
+        + (
+            ", ".join(f"{m.name} ({m.scope.value})" for m in skills)
+            if skills
+            else "(none)"
+        )
+    ]
+    if skill_library.diagnostics:
+        lines.append("Skill diagnostics:")
+        for diagnostic in skill_library.diagnostics:
+            lines.append(
+                f"- [{diagnostic.kind}] {diagnostic.path}: {diagnostic.message}"
+            )
+    return "\n".join(lines)
+
+
 def format_toolbar(agent) -> str:
     """One-line status bar: runtime state and token usage."""
     state = agent.runtime.state.value
@@ -92,13 +114,15 @@ def build_session(agent) -> PromptSession:
     )
 
 
-def run_repl(agent, console: Console | None = None, session=None) -> None:
+def run_repl(agent, console: Console | None = None, session=None, skill_library=None) -> None:
     console = console or agent.console
     session = session or build_session(agent)
+    session_note = f" Session: {agent.session_id}." if getattr(agent, "session_id", None) else ""
     console.print(
         "[dim]sakicode — /runtime for states, /trace for tool calls, "
-        "/approvals for permission decisions, /context for token layers; "
-        "exit, quit or /exit to leave (Ctrl-C / Ctrl-D also work).[/dim]"
+        "/approvals for permission decisions, /context for token layers, "
+        "/skills for the skill index; "
+        f"exit, quit or /exit to leave (Ctrl-C / Ctrl-D also work).{session_note}[/dim]"
     )
     while True:
         try:
@@ -129,6 +153,9 @@ def run_repl(agent, console: Console | None = None, session=None) -> None:
             continue
         if text.lower() == "/context":
             console.print(format_context(agent))
+            continue
+        if text.lower() == "/skills":
+            console.print(format_skills(skill_library))
             continue
         try:
             agent.run_turn(text)

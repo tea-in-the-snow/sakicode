@@ -12,9 +12,11 @@ the result in a sentence or two.\
 """
 
 
-def build_system_prompt(cwd: str = ".") -> str:
-    """Return the base prompt, with ./AGENTS.md appended if it exists."""
+def build_system_prompt(cwd: str = ".", skill_index: str = "") -> str:
+    """Return the base prompt plus the skill index and ./AGENTS.md if present."""
     prompt = BASE_PROMPT
+    if skill_index:
+        prompt += f"\n\n{skill_index}"
     agents_md = os.path.join(cwd, "AGENTS.md")
     if os.path.isfile(agents_md):
         with open(agents_md, "r", encoding="utf-8") as f:

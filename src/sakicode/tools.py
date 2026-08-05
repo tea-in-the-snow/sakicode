@@ -2,9 +2,13 @@
 
 import glob as glob_module
 import os
+from pathlib import Path
 import re
 import subprocess
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .sandbox import SandboxPolicy
 
 from .tooling import (
     FunctionTool,
@@ -98,12 +102,19 @@ def edit_file(path: str, old_string: str, new_string: str) -> ToolResult:
 
 def run_bash(command: str) -> ToolResult:
     """Run a bash command in the cwd where sakicode was started."""
+    return _run_command(["bash", "-c", command], env=None, sandbox="none")
+
+
+def _run_command(
+    argv: list[str], env: dict[str, str] | None, sandbox: str
+) -> ToolResult:
     try:
         process = subprocess.run(
-            ["bash", "-c", command],
+            argv,
             capture_output=True,
             text=True,
             timeout=RUN_BASH_TIMEOUT,
+            env=env,
         )
     except subprocess.TimeoutExpired as error:
         partial_output, _, _ = _truncate(
@@ -126,6 +137,7 @@ def run_bash(command: str) -> ToolResult:
         "truncated": truncated,
         "original_chars": original_chars,
         "shown_chars": min(original_chars, RUN_BASH_MAX_CHARS),
+        "sandbox": sandbox,
     }
     if process.returncode != 0:
         return ToolResult.error(
@@ -354,9 +366,47 @@ BUILTIN_TOOLS = [
     ),
 ]
 
-def create_registry() -> ToolRegistry:
-    """Create an isolated registry so each Agent owns its trace history."""
-    return ToolRegistry(BUILTIN_TOOLS)
+def create_registry(
+    sandbox_policy: "SandboxPolicy | None" = None,
+    workspace: "Path | None" = None,
+) -> ToolRegistry:
+    """Create an isolated registry so each Agent owns its trace history.
+
+    With a sandbox policy, the run_bash handler wraps every approved command
+    in bubblewrap (M9): read-only filesystem outside the workspace, private
+    /tmp, no network, and a secret-scrubbed environment. Without one the
+    registry behaves exactly as before.
+    """
+    if sandbox_policy is None:
+        return ToolRegistry(BUILTIN_TOOLS)
+    from .sandbox import build_argv, bwrap_available, scrub_environment
+
+    root = Path(workspace) if workspace is not None else Path.cwd()
+    root = root.resolve()
+    use_bwrap = bwrap_available()
+
+    def sandboxed_run_bash(command: str) -> ToolResult:
+        if not use_bwrap:
+            return run_bash(command)
+        argv = build_argv(command, sandbox_policy, root, Path.cwd())
+        return _run_command(
+            argv, env=scrub_environment(sandbox_policy), sandbox="bwrap"
+        )
+
+    bash_schema = next(
+        tool for tool in BUILTIN_TOOLS if tool.name == "run_bash"
+    )
+    sandboxed_bash = FunctionTool(
+        name="run_bash",
+        description=bash_schema.description + " (runs inside a bwrap sandbox)",
+        input_schema=bash_schema.input_schema,
+        handler=sandboxed_run_bash,
+        requires_confirmation=True,
+    )
+    return ToolRegistry(
+        [sandboxed_bash if tool.name == "run_bash" else tool
+         for tool in BUILTIN_TOOLS]
+    )
 
 
 DEFAULT_REGISTRY = create_registry()

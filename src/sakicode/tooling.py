@@ -228,6 +228,10 @@ class ToolRegistry:
         )
         return result
 
+    def restore_traces(self, traces: list[dict[str, Any]]) -> None:
+        """Restore validated historical traces without invoking any tool."""
+        self.traces = [ToolTrace(**trace) for trace in traces]
+
 
 _SENSITIVE_KEYS = {
     "api_key",
